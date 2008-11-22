@@ -1,6 +1,8 @@
 (defun jde-refactor-rename (to-name &optional query)
   "Rename the thing at point to TO-NAME. If query (the prefix
-argument) is non-NIL, query each renaming."
+argument) is non-NIL, query each renaming.  Cannot cope with
+variables declared in a Java 5 for-each loop (at least with the
+standard JDEE, eh)."
   ;; TODO: Handle methods (at least in-class uses)
   ;; TODO: Deal with name conflicts
   ;; TODO-MAYBE: Deal with non-private members by renaming all users
@@ -13,22 +15,31 @@ argument) is non-NIL, query each renaming."
     (let* ((thing-of-interest (thing-at-point 'symbol))
            (pair (progn (end-of-thing 'symbol)
                         (jde-parse-java-variable-at-point))))
-      (let ((declaration-pos
-             (and (string= (car pair) "")
-                  (jde-parse-find-declaration-of thing-of-interest))))
-        (when declaration-pos
-          (let ((boundaries
-                 (if (jde-refactor-parameter-of-current-method-p thing-of-interest)
-                     (cons (semantic-tag-start (semantic-current-tag))
-                           (semantic-tag-end (semantic-current-tag)))
-                   (jde-refactor-block-boundaries))))
-            (funcall (if query 'query-replace 'replace-string)
-                     thing-of-interest to-name
-                     t declaration-pos (cdr boundaries))))))))
+      (let ((boundaries
+             (cond ((and (string= (car pair) "")
+                         (jde-parse-find-declaration-of thing-of-interest))
+                    (let ((function-tag (semantic-current-tag-of-class 'function)))
+                      (if (jde-refactor-parameter-of-method-p thing-of-interest
+                                                              function-tag)
+                          (cons (semantic-tag-start function-tag)
+                                (semantic-tag-end function-tag))
+                        (cons (jde-parse-find-declaration-of thing-of-interest)
+                              (cdr (jde-refactor-block-boundaries))))))
+                   ((jde-refactor-private-method-in-class-p thing-of-interest (semantic-current-tag-of-class 'type))
+                    (let ((class-tag (semantic-current-tag-of-class 'type)))
+                      (cons (semantic-tag-start class-tag)
+                            (semantic-tag-end class-tag)))))))
+        (funcall (if query 'query-replace 'replace-string)
+                 thing-of-interest to-name
+                 t (car boundaries) (cdr boundaries))))))
 
-(defun jde-refactor-parameter-of-current-method-p (thing)
-  (find thing (semantic-tag-function-arguments (semantic-current-tag-of-class 'function))
-        :key #'car :test #'string=))
+(defun jde-refactor-private-method-in-class-p (name class-tag)
+  (semantic-find-tags-by-name name
+                              (semantic-tag-type-members class-tag)))
+
+(defun jde-refactor-parameter-of-method-p (thing function-tag)
+  (find thing (semantic-tag-function-arguments function-tag)
+        :key #'semantic-tag-name :test #'string=))
 
 (defun jde-refactor-block-boundaries ()
   "Return a pair (START . END) denoting the boundaries of the
