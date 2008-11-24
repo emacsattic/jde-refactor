@@ -209,3 +209,5 @@ clause, and matches if no other clauses match.
 
 (defun jde-refactor-constant-p (type)
   (memq type jde-refactor-constant-types))
+
+(provide 'jde-refactor)
