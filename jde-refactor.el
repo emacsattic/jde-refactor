@@ -158,7 +158,6 @@ block (currently really method) containing point."
       (undo-boundary))))
 
 (defun jde-refactor-constant-expression-at-point ()
-  (interactive)
   (save-excursion
     (when (in-string-p)
       (skip-syntax-forward "^\""))
