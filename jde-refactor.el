@@ -71,6 +71,11 @@ setter idiom of parameters shadowing member variables, either."
           (let ((thing-of-interest (thing-at-point 'symbol)))
             (list (read-string (concat "Rename " thing-of-interest " to: "))
                   current-prefix-arg))))
+  (jde-refactor--rename-internal (jde-refactor-replace-function (or jde-refactor-rename-query-p
+                                                                   query))
+                                to-name))
+
+(defun jde-refactor--rename-internal (rename-function to-name)
   (save-excursion
     (let* ((thing-of-interest (thing-at-point 'symbol))
            (pair (progn (end-of-thing 'symbol)
@@ -93,8 +98,7 @@ setter idiom of parameters shadowing member variables, either."
                     (let ((class-tag (semantic-current-tag-of-class 'type)))
                       (cons (semantic-tag-start class-tag)
                             (semantic-tag-end class-tag)))))))
-        (funcall (jde-refactor-replace-function (or jde-refactor-rename-query-p
-                                                    query))
+        (funcall rename-function
                  thing-of-interest to-name
                  t (car boundaries) (cdr boundaries))))))
 
@@ -210,4 +214,81 @@ clause, and matches if no other clauses match.
 (defun jde-refactor-constant-p (type)
   (memq type jde-refactor-constant-types))
 
+(defun jde-refactor-rename-inline ()
+  "Performs an inline rename of the thing at point."
+  (interactive "*")
+  (jde-refactor--rename-internal 'jde-refactor--replace-linked nil))
+
+(defun jde-refactor--replace-linked (thing to-name ignored start end)
+  (jde-refactor--setup-overlays thing start end))
+
+(defun jde-refactor--make-overlay-keymap (thing)
+  (let ((keymap (make-sparse-keymap)))
+    (define-key keymap "\r" (jde-refactor--replace-linked-accept thing))
+    keymap))
+
+(defun jde-refactor--replace-linked-accept (thing)
+  (lexical-let ((thing thing))
+    (lambda ()
+      (interactive)
+      (jde-refactor--remove-overlays thing))))
+
+(defun jde-refactor--remove-overlays (thing)
+  (remove-overlays (point-min) (point-max)
+                   'jde-refactor-rename-thing thing))
+
+(defun jde-refactor--synchronize-overlays (thing start end)
+  (lexical-let ((thing thing)
+                (start start)
+                (end end))
+    (lambda (overlay afterp change-start change-end &optional length)
+      (when (and afterp (not undo-in-progress))
+        (save-excursion 
+          (let ((new-value (buffer-substring (overlay-start overlay)
+                                             (overlay-end overlay)))
+                (inhibit-modification-hooks t))
+            (mapc
+             (lambda (o)
+               (update-overlay-content o new-value))
+             (remove overlay
+                     (find-overlays
+                      start end
+                      'jde-refactor-rename-thing thing)))))))))
+
+(defun update-overlay-content (o new-value)
+  (let* ((o-start (overlay-start o))
+         (o-end (overlay-end o))
+         (o-length (- o-end o-start)))
+    (goto-char o-start)
+    (message "%s - %s" (buffer-substring-no-properties o-start o-end)
+             new-value)
+    (insert new-value)
+    (when (eq o-length 0)
+      (move-overlay o o-start (point)))
+    (delete-char o-length)))
+
+(defun find-overlays (start end property value)
+  (overlay-recenter end)
+  (let (overlays)
+    (dolist (o (overlays-in start end))
+      (when (eq (overlay-get o property) value)
+        (push o overlays)))
+    (nreverse overlays)))
+
+(defun jde-refactor--setup-overlays (thing start end)
+  (save-excursion
+    (goto-char start)
+    (while (re-search-forward (concat "\\b" thing "\\b") end t)
+      (let ((overlay (make-overlay (match-beginning 0) (match-end 0)
+                                   nil nil t))
+            (overlay-keymap (jde-refactor--make-overlay-keymap thing))
+            (hooks
+             (list (jde-refactor--synchronize-overlays thing start end))))
+        (overlay-put overlay 'face 'match)
+        (overlay-put overlay 'jde-refactor-rename-thing thing)
+        (overlay-put overlay 'modification-hooks hooks)
+        (overlay-put overlay 'insert-in-front-hooks hooks)
+        (overlay-put overlay 'insert-behind-hooks hooks)
+        (overlay-put overlay 'keymap overlay-keymap)))))
+  
 (provide 'jde-refactor)
